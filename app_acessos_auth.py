@@ -91,8 +91,7 @@ def require_login():
 # ---------------------------------------------------------
 @st.cache_data
 def carregar_base_lucasv() -> pd.DataFrame:
-    # Lê a planilha de acessos (LUCASV.xlsx) direto do GitHub
-    df = pd.read_excel(GITHUB_LUCASV_URL)
+    df = pd.read_excel(GITHUB_LUCASV_URL, engine="openpyxl")
     cols_esperadas = ["Grupo", "Tp.Sistema", "Sistema", "Módulo", "Menu"]
     faltando = [c for c in cols_esperadas if c not in df.columns]
     if faltando:
@@ -102,13 +101,7 @@ def carregar_base_lucasv() -> pd.DataFrame:
 
 @st.cache_data
 def carregar_conflitos() -> pd.DataFrame:
-    """
-    Lê a planilha Perfis Conflitantes direto do GitHub:
-    - Localiza a linha em que aparecem "PERFIL I" e "PERFIL II"
-    - Considera as linhas abaixo como: PERFIL I, PERFIL II, MOTIVO
-    """
-    conf_raw = pd.read_excel(GITHUB_CONFLITOS_URL, header=None)
-    # Localiza cabeçalho
+    conf_raw = pd.read_excel(GITHUB_CONFLITOS_URL, header=None, engine="openpyxl")
     header_idx = conf_raw.index[
         (conf_raw[1] == "PERFIL I") & (conf_raw[2] == "PERFIL II")
     ][0]
@@ -120,28 +113,14 @@ def carregar_conflitos() -> pd.DataFrame:
 
 
 def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
-    """
-    base: DataFrame com colunas [Grupo, Tp.Sistema, Sistema, Módulo, Menu]
-    conf_df: DataFrame com colunas [Perfil1, Perfil2, Motivo]
-    perfis_selecionados: lista de perfis (grupos) escolhidos no painel
 
-    Retorna:
-    - matriz (DataFrame) com colunas dos perfis selecionados + info de conflito
-    - perfil_to_set
-    - exclusivos_por_perfil
-    - acessos_comuns_set
-    - conflicts_df (DataFrame) detalhado dos conflitos para os perfis selecionados
-    """
-    # Todas as combinações possíveis
     combos = base[["Tp.Sistema", "Sistema", "Módulo", "Menu"]].drop_duplicates().reset_index(drop=True)
     combos["combo_key"] = combos[["Tp.Sistema", "Sistema", "Módulo", "Menu"]].astype(str).agg("||".join, axis=1)
 
-    # Mapeia combo_key -> perfis (Grupos) que têm esse acesso
     base_combo = base.copy()
     base_combo["combo_key"] = base_combo[["Tp.Sistema", "Sistema", "Módulo", "Menu"]].astype(str).agg("||".join, axis=1)
     combo_to_perfis = base_combo.groupby("combo_key")["Grupo"].unique()
 
-    # Mapeia perfil -> conjunto de combos
     perfil_to_set = {}
     for perfil in perfis_selecionados:
         df_p = base[base["Grupo"] == perfil]
@@ -150,17 +129,14 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
             for row in df_p[["Tp.Sistema", "Sistema", "Módulo", "Menu"]].to_numpy()
         )
 
-    # Acessos comuns a TODOS os perfis
     acessos_comuns_set = set.intersection(*perfil_to_set.values())
 
-    # Exclusivos por perfil
     exclusivos_por_perfil = {}
     for perfil in perfis_selecionados:
         outros = [p for p in perfis_selecionados if p != perfil]
         union_outros = set().union(*(perfil_to_set[p] for p in outros))
         exclusivos_por_perfil[perfil] = perfil_to_set[perfil] - union_outros
 
-    # Matriz de presença (✔️ / vazio)
     matriz = combos[["Tp.Sistema", "Sistema", "Módulo", "Menu"]].copy()
     for perfil in perfis_selecionados:
         s = perfil_to_set[perfil]
@@ -169,7 +145,6 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
             axis=1
         )
 
-    # ----------------- Lógica de conflitos -----------------
     selected_set = set(perfis_selecionados)
 
     conf_filtered = conf_df[
@@ -180,25 +155,16 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
     if conf_filtered.empty:
         matriz["Conflito?"] = ""
         matriz["Perfis em Conflito"] = ""
-        conflicts_df = pd.DataFrame(columns=[
-            "Perfil1", "Perfil2", "Motivo",
-            "Tp.Sistema", "Sistema", "Módulo", "Menu"
-        ])
-        return matriz, perfil_to_set, exclusivos_por_perfil, acessos_comuns_set, conflicts_df
+        return matriz, perfil_to_set, exclusivos_por_perfil, acessos_comuns_set, pd.DataFrame()
 
-    # Mapeia par de perfis em conflito -> motivo(s)
     conf_pair_motivo = {}
     for _, row in conf_filtered.iterrows():
         key = frozenset({row["Perfil1"], row["Perfil2"]})
         conf_pair_motivo.setdefault(key, set()).add(str(row["Motivo"]))
 
-    # Para cada combo, verifica se há algum par de perfis em conflito com esse acesso
-    combo_conflicts = {}  # combo_key -> lista de dicts {Perfil1, Perfil2, Motivo}
-    from itertools import combinations
+    combo_conflicts = {}
     for combo_key, perfis in combo_to_perfis.items():
         perfis_sel = [p for p in perfis if p in selected_set]
-        if len(perfis_sel) < 2:
-            continue
         for p1, p2 in combinations(perfis_sel, 2):
             key = frozenset({p1, p2})
             if key in conf_pair_motivo:
@@ -207,9 +173,9 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
                     {"Perfil1": p1, "Perfil2": p2, "Motivo": motivos}
                 )
 
-    # Monta colunas de conflito na matriz
     conflito_flag = []
     conflito_descr = []
+
     for _, row in combos.iterrows():
         ck = row["combo_key"]
         if ck in combo_conflicts:
@@ -225,22 +191,20 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
     matriz["Conflito?"] = conflito_flag
     matriz["Perfis em Conflito"] = conflito_descr
 
-    # DataFrame detalhado de conflitos
     registros = []
     for _, row in combos.iterrows():
         ck = row["combo_key"]
-        if ck not in combo_conflicts:
-            continue
-        for c in combo_conflicts[ck]:
-            registros.append({
-                "Perfil1": c["Perfil1"],
-                "Perfil2": c["Perfil2"],
-                "Motivo": c["Motivo"],
-                "Tp.Sistema": row["Tp.Sistema"],
-                "Sistema": row["Sistema"],
-                "Módulo": row["Módulo"],
-                "Menu": row["Menu"],
-            })
+        if ck in combo_conflicts:
+            for c in combo_conflicts[ck]:
+                registros.append({
+                    "Perfil1": c["Perfil1"],
+                    "Perfil2": c["Perfil2"],
+                    "Motivo": c["Motivo"],
+                    "Tp.Sistema": row["Tp.Sistema"],
+                    "Sistema": row["Sistema"],
+                    "Módulo": row["Módulo"],
+                    "Menu": row["Menu"],
+                })
 
     conflicts_df = pd.DataFrame(registros)
 
@@ -257,16 +221,19 @@ def mostrar_dashboard():
     with st.sidebar:
         st.markdown("### 👤 Usuário logado")
         st.write(st.session_state.get("username", ""))
+
         if st.button("Sair"):
             st.session_state["authenticated"] = False
             st.session_state["username"] = ""
             do_rerun()
 
-        st.markdown("---")
-        st.markdown("### 📂 Fontes de dados")
-        st.caption("Lendo automaticamente de:")
-        st.code(f"LUCASV: {GITHUB_LUCASV_URL}", language="text")
-        st.code(f"Conflitos: {GITHUB_CONFLITOS_URL}", language="text")
+        # EXIBE FONTES DE DADOS APENAS PARA ADMIN
+        if st.session_state.get("username") == "admin":
+            st.markdown("---")
+            st.markdown("### 📂 Fontes de dados")
+            st.caption("Lendo automaticamente de:")
+            st.code(f"LUCASV: {GITHUB_LUCASV_URL}")
+            st.code(f"Conflitos: {GITHUB_CONFLITOS_URL}")
 
     st.markdown(
         """
@@ -276,9 +243,7 @@ def mostrar_dashboard():
         """
     )
 
-    # -----------------------------
-    # Carrega dados direto do GitHub
-    # -----------------------------
+    # Carrega dados
     try:
         base = carregar_base_lucasv()
     except Exception as e:
@@ -291,147 +256,83 @@ def mostrar_dashboard():
         st.error(f"Erro ao ler Perfis Conflitantes do GitHub: {e}")
         conf_df = pd.DataFrame(columns=["Perfil1", "Perfil2", "Motivo"])
 
-    # -----------------------------
-    # Seleção de perfis
-    # -----------------------------
-    st.sidebar.header("🎯 Seleção de Perfis (Grupo)")
+    st.sidebar.header("🎯 Seleção de Perfis")
     todos_perfis = sorted(base["Grupo"].unique())
 
     perfis_selecionados = st.sidebar.multiselect(
         "Selecione 2 ou mais perfis para comparar:",
         options=todos_perfis,
-        default=todos_perfis[:2] if len(todos_perfis) >= 2 else None
+        default=todos_perfis[:2]
     )
 
     if len(perfis_selecionados) < 2:
-        st.warning("Selecione **pelo menos 2 perfis** para realizar o comparativo.")
+        st.warning("Selecione pelo menos 2 perfis.")
         return
 
-    # -----------------------------
-    # Cálculos de matriz e conflitos
-    # -----------------------------
     matriz, perfil_to_set, exclusivos_por_perfil, acessos_comuns_set, conflicts_df = \
         calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados)
 
-    # -----------------------------
-    # Resumo numérico
-    # -----------------------------
+    # Resumo
     st.subheader("📊 Resumo dos Perfis Selecionados")
 
-    cols_resumo = st.columns(len(perfis_selecionados) + 2)
+    cols = st.columns(len(perfis_selecionados) + 2)
 
-    # Caixa de resumo por perfil
     for i, perfil in enumerate(perfis_selecionados):
-        total = len(perfil_to_set[perfil])
-        exclusivos = len(exclusivos_por_perfil[perfil])
-        cols_resumo[i].metric(
-            label=f"{perfil}",
-            value=f"{total} acessos",
-            delta=f"{exclusivos} exclusivos"
+        cols[i].metric(
+            perfil,
+            f"{len(perfil_to_set[perfil])} acessos",
+            f"{len(exclusivos_por_perfil[perfil])} exclusivos"
         )
 
-    # Acessos comuns
-    cols_resumo[len(perfis_selecionados)].metric(
-        label="Acessos Iguais (Comuns a todos)",
-        value=len(acessos_comuns_set)
+    cols[len(perfis_selecionados)].metric(
+        "Acessos Iguais",
+        len(acessos_comuns_set)
     )
 
-    # Total de linhas com conflito
-    total_conflitos = 0 if conflicts_df is None or conflicts_df.empty else conflicts_df.shape[0]
-    cols_resumo[len(perfis_selecionados)+1].metric(
-        label="Registros em Conflito (combinações)",
-        value=total_conflitos
+    cols[len(perfis_selecionados)+1].metric(
+        "Conflitos",
+        conflicts_df.shape[0]
     )
 
-    st.markdown("---")
+    # Abas
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🔎 Visão Geral",
+        "✅ Iguais",
+        "🧩 Exclusivos",
+        "📋 Matriz",
+        "⚠️ Conflitos"
+    ])
 
-    # -----------------------------
-    # Tabs de visualização
-    # -----------------------------
-    tab_geral, tab_iguais, tab_exclusivos, tab_matriz, tab_conflitos = st.tabs(
-        [
-            "🔎 Visão Geral",
-            "✅ Acessos Iguais",
-            "🧩 Acessos Exclusivos",
-            "📋 Matriz Completa",
-            "⚠️ Conflitos"
-        ]
-    )
-
-    # ---- Tab Visão Geral ----
-    with tab_geral:
-        st.markdown("### 🔎 Amostra da Base Filtrada por Perfis Selecionados")
+    with tab1:
         st.dataframe(
             base[base["Grupo"].isin(perfis_selecionados)]
-            .sort_values(["Grupo", "Tp.Sistema", "Sistema", "Módulo", "Menu"])
-            .reset_index(drop=True),
+            .sort_values(["Grupo", "Tp.Sistema", "Sistema", "Módulo", "Menu"]),
             use_container_width=True
         )
 
-    # ---- Tab Acessos Iguais ----
-    with tab_iguais:
-        st.markdown("### ✅ Acessos Iguais entre TODOS os perfis selecionados")
-        if len(acessos_comuns_set) == 0:
-            st.info("Não há acessos comuns a todos os perfis selecionados.")
-        else:
-            df_comuns = pd.DataFrame(
-                list(acessos_comuns_set),
-                columns=["Tp.Sistema", "Sistema", "Módulo", "Menu"]
-            ).sort_values(["Tp.Sistema", "Sistema", "Módulo", "Menu"])
-            st.dataframe(df_comuns, use_container_width=True)
+    with tab2:
+        df_comuns = pd.DataFrame(list(acessos_comuns_set),
+                                 columns=["Tp.Sistema", "Sistema", "Módulo", "Menu"])
+        st.dataframe(df_comuns, use_container_width=True)
 
-    # ---- Tab Acessos Exclusivos ----
-    with tab_exclusivos:
-        st.markdown("### 🧩 Acessos Exclusivos por Perfil (ausentes nos demais)")
+    with tab3:
         for perfil in perfis_selecionados:
-            st.markdown(f"#### Perfil: **{perfil}**")
-            exclusivos_set = exclusivos_por_perfil[perfil]
-            if len(exclusivos_set) == 0:
-                st.info("Nenhum acesso exclusivo para este perfil entre os selecionados.")
-            else:
-                df_exc = pd.DataFrame(
-                    list(exclusivos_set),
-                    columns=["Tp.Sistema", "Sistema", "Módulo", "Menu"]
-                ).sort_values(["Tp.Sistema", "Sistema", "Módulo", "Menu"])
-                st.dataframe(df_exc, use_container_width=True)
+            st.markdown(f"#### {perfil}")
+            df_exc = pd.DataFrame(list(exclusivos_por_perfil[perfil]),
+                                  columns=["Tp.Sistema", "Sistema", "Módulo", "Menu"])
+            st.dataframe(df_exc, use_container_width=True)
 
-    # ---- Tab Matriz Completa ----
-    with tab_matriz:
-        st.markdown(
-            """
-            ### 📋 Matriz Completa de Acessos  
-            - ✔️ indica que o perfil possui aquela combinação de **Tp.Sistema, Sistema, Módulo, Menu**  
-            - Coluna **Conflito?**: ⚠️ quando há pelo menos um par de perfis em conflito nessa linha  
-            - Coluna **Perfis em Conflito**: exibe os pares de perfis conflitantes
-            """
+    with tab4:
+        st.dataframe(
+            matriz.sort_values(["Tp.Sistema", "Sistema", "Módulo", "Menu"]),
+            use_container_width=True
         )
-        matriz_exibe = matriz.sort_values(
-            ["Tp.Sistema", "Sistema", "Módulo", "Menu"]
-        ).reset_index(drop=True)
-        st.dataframe(matriz_exibe, use_container_width=True)
 
-    # ---- Tab Conflitos ----
-    with tab_conflitos:
-        st.markdown("### ⚠️ Detalhamento dos Conflitos de Acesso")
-
-        if conflicts_df is None or conflicts_df.empty:
-            st.info("Nenhum conflito encontrado para os perfis selecionados (com base na matriz enviada).")
+    with tab5:
+        if conflicts_df.empty:
+            st.info("Nenhum conflito para os perfis selecionados.")
         else:
-            df_conf_show = conflicts_df.sort_values(
-                ["Perfil1", "Perfil2", "Tp.Sistema", "Sistema", "Módulo", "Menu"]
-            ).reset_index(drop=True)
-            st.dataframe(df_conf_show, use_container_width=True)
-
-            st.markdown("#### Resumo por Par de Perfis em Conflito")
-            resumo_pares = (
-                df_conf_show
-                .groupby(["Perfil1", "Perfil2"])["Menu"]
-                .count()
-                .reset_index()
-                .rename(columns={"Menu": "Qtd Combinações em Conflito"})
-                .sort_values("Qtd Combinações em Conflito", ascending=False)
-            )
-            st.dataframe(resumo_pares, use_container_width=True)
+            st.dataframe(conflicts_df, use_container_width=True)
 
 
 # ---------------------------------------------------------
@@ -444,5 +345,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
