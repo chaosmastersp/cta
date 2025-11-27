@@ -4,14 +4,18 @@ import os
 from itertools import combinations
 
 # ---------------------------------------------------------
-# Configuração do app
+# CONFIGURAÇÃO GERAL DO APP
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Comparativo de Perfis de Acesso",
     layout="wide"
 )
 
-# Helper para rerun compatível
+# 🔗 URLs dos arquivos no GitHub (use links RAW)
+GITHUB_LUCASV_URL = "https://github.com/chaosmastersp/cta/blob/main/LUCASV.xlsx"
+GITHUB_CONFLITOS_URL = "https://github.com/chaosmastersp/cta/blob/main/Perfis%20Conflitantes.xlsx"
+
+# Helper para rerun compatível (novas/antigas versões do Streamlit)
 def do_rerun():
     rerun = getattr(st, "rerun", None)
     if rerun is not None:
@@ -20,7 +24,7 @@ def do_rerun():
         st.experimental_rerun()
 
 # ---------------------------------------------------------
-# Autenticação simples (usuário/senha)
+# AUTENTICAÇÃO (usuário/senha)
 # ---------------------------------------------------------
 def get_credentials():
     """
@@ -83,11 +87,12 @@ def require_login():
 
 
 # ---------------------------------------------------------
-# Funções auxiliares de dados
+# LEITURA DE DADOS DIRETO DO GITHUB
 # ---------------------------------------------------------
 @st.cache_data
-def carregar_base(file) -> pd.DataFrame:
-    df = pd.read_excel(file)
+def carregar_base_lucasv() -> pd.DataFrame:
+    # Lê a planilha de acessos (LUCASV.xlsx) direto do GitHub
+    df = pd.read_excel(GITHUB_LUCASV_URL)
     cols_esperadas = ["Grupo", "Tp.Sistema", "Sistema", "Módulo", "Menu"]
     faltando = [c for c in cols_esperadas if c not in df.columns]
     if faltando:
@@ -96,13 +101,13 @@ def carregar_base(file) -> pd.DataFrame:
 
 
 @st.cache_data
-def carregar_conflitos(file) -> pd.DataFrame:
+def carregar_conflitos() -> pd.DataFrame:
     """
-    Lê a planilha Perfis Conflitantes:
+    Lê a planilha Perfis Conflitantes direto do GitHub:
     - Localiza a linha em que aparecem "PERFIL I" e "PERFIL II"
     - Considera as linhas abaixo como: PERFIL I, PERFIL II, MOTIVO
     """
-    conf_raw = pd.read_excel(file, header=None)
+    conf_raw = pd.read_excel(GITHUB_CONFLITOS_URL, header=None)
     # Localiza cabeçalho
     header_idx = conf_raw.index[
         (conf_raw[1] == "PERFIL I") & (conf_raw[2] == "PERFIL II")
@@ -165,7 +170,6 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
         )
 
     # ----------------- Lógica de conflitos -----------------
-    # Prepara estrutura de pares conflitantes (independente de ordem)
     selected_set = set(perfis_selecionados)
 
     conf_filtered = conf_df[
@@ -174,7 +178,6 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
     ].copy()
 
     if conf_filtered.empty:
-        # Sem conflitos para os perfis selecionados
         matriz["Conflito?"] = ""
         matriz["Perfis em Conflito"] = ""
         conflicts_df = pd.DataFrame(columns=[
@@ -183,16 +186,16 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
         ])
         return matriz, perfil_to_set, exclusivos_por_perfil, acessos_comuns_set, conflicts_df
 
-    # Conjunto de pares conflitantes
+    # Mapeia par de perfis em conflito -> motivo(s)
     conf_pair_motivo = {}
     for _, row in conf_filtered.iterrows():
         key = frozenset({row["Perfil1"], row["Perfil2"]})
         conf_pair_motivo.setdefault(key, set()).add(str(row["Motivo"]))
 
-    # Para cada combo, vê se há algum par de perfis em conflito que compartilha esse combo
+    # Para cada combo, verifica se há algum par de perfis em conflito com esse acesso
     combo_conflicts = {}  # combo_key -> lista de dicts {Perfil1, Perfil2, Motivo}
+    from itertools import combinations
     for combo_key, perfis in combo_to_perfis.items():
-        # apenas perfis selecionados
         perfis_sel = [p for p in perfis if p in selected_set]
         if len(perfis_sel) < 2:
             continue
@@ -245,7 +248,7 @@ def calcular_conflitos_para_selecionados(base, conf_df, perfis_selecionados):
 
 
 # ---------------------------------------------------------
-# Dashboard principal
+# DASHBOARD PRINCIPAL
 # ---------------------------------------------------------
 def mostrar_dashboard():
     st.title("🔐 Dashboard de Acessos por Perfil (Grupo) com Conflitos")
@@ -259,49 +262,34 @@ def mostrar_dashboard():
             st.session_state["username"] = ""
             do_rerun()
 
+        st.markdown("---")
+        st.markdown("### 📂 Fontes de dados")
+        st.caption("Lendo automaticamente de:")
+        st.code(f"LUCASV: {GITHUB_LUCASV_URL}", language="text")
+        st.code(f"Conflitos: {GITHUB_CONFLITOS_URL}", language="text")
+
     st.markdown(
         """
         Este painel compara acessos entre perfis (coluna **Grupo** da base LUCASV) 
         e destaca **conflitos de segregação de funções** com base na planilha 
-        **Perfis Conflitantes**.
+        **Perfis Conflitantes**, ambas lidas diretamente do GitHub.
         """
     )
 
     # -----------------------------
-    # Upload de arquivos
+    # Carrega dados direto do GitHub
     # -----------------------------
-    st.sidebar.header("📂 Arquivos de Dados")
-
-    upload_base = st.sidebar.file_uploader(
-        "Envie o arquivo de acessos (LUCASV.xlsx)",
-        type=["xlsx"],
-        help="Estrutura: Grupo, Tp.Sistema, Sistema, Módulo, Menu."
-    )
-
-    upload_conf = st.sidebar.file_uploader(
-        "Envie o arquivo de Perfis Conflitantes (.xlsx)",
-        type=["xlsx"],
-        help="Matriz de Perfis Conflitantes - Perfis I/II e Motivo."
-    )
-
-    if upload_base is None:
-        st.info("Envie o arquivo **LUCASV.xlsx** na barra lateral para iniciar a análise.")
+    try:
+        base = carregar_base_lucasv()
+    except Exception as e:
+        st.error(f"Erro ao ler LUCASV do GitHub: {e}")
         return
 
     try:
-        base = carregar_base(upload_base)
+        conf_df = carregar_conflitos()
     except Exception as e:
-        st.error(f"Erro ao ler LUCASV.xlsx: {e}")
-        return
-
-    if upload_conf is not None:
-        try:
-            conf_df = carregar_conflitos(upload_conf)
-        except Exception as e:
-            st.error(f"Erro ao ler Perfis Conflitantes: {e}")
-            conf_df = None
-    else:
-        conf_df = None
+        st.error(f"Erro ao ler Perfis Conflitantes do GitHub: {e}")
+        conf_df = pd.DataFrame(columns=["Perfil1", "Perfil2", "Motivo"])
 
     # -----------------------------
     # Seleção de perfis
@@ -318,12 +306,6 @@ def mostrar_dashboard():
     if len(perfis_selecionados) < 2:
         st.warning("Selecione **pelo menos 2 perfis** para realizar o comparativo.")
         return
-
-    # Se não houver planilha de conflitos, mantemos funcional, apenas sem marcação
-    if conf_df is None:
-        st.warning("Nenhum arquivo de **Perfis Conflitantes** foi enviado. "
-                   "Os acessos serão comparados, mas sem marcação de conflitos.")
-        conf_df = pd.DataFrame(columns=["Perfil1", "Perfil2", "Motivo"])
 
     # -----------------------------
     # Cálculos de matriz e conflitos
@@ -435,13 +417,11 @@ def mostrar_dashboard():
         if conflicts_df is None or conflicts_df.empty:
             st.info("Nenhum conflito encontrado para os perfis selecionados (com base na matriz enviada).")
         else:
-            # Ordena para facilitar leitura
             df_conf_show = conflicts_df.sort_values(
                 ["Perfil1", "Perfil2", "Tp.Sistema", "Sistema", "Módulo", "Menu"]
             ).reset_index(drop=True)
             st.dataframe(df_conf_show, use_container_width=True)
 
-            # Pequeno resumo por par de perfis
             st.markdown("#### Resumo por Par de Perfis em Conflito")
             resumo_pares = (
                 df_conf_show
@@ -455,7 +435,7 @@ def mostrar_dashboard():
 
 
 # ---------------------------------------------------------
-# Main
+# MAIN
 # ---------------------------------------------------------
 def main():
     require_login()
