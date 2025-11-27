@@ -237,9 +237,8 @@ def mostrar_dashboard():
 
     st.markdown(
         """
-        Este painel compara acessos entre perfis (coluna **Grupo** da base LUCASV) 
-        e destaca **conflitos de segregação de funções** com base na planilha 
-        **Perfis Conflitantes**, ambas lidas diretamente do GitHub.
+        Este painel compara acessos entre perfis e destaca **conflitos de segregação de funções** com base na planilha 
+        **Perfis Conflitantes**.
         """
     )
 
@@ -345,6 +344,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
