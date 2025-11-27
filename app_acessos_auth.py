@@ -12,8 +12,8 @@ st.set_page_config(
 )
 
 # 🔗 URLs dos arquivos no GitHub (use links RAW)
-GITHUB_LUCASV_URL = "https://github.com/chaosmastersp/cta/blob/main/LUCASV.xlsx"
-GITHUB_CONFLITOS_URL = "https://github.com/chaosmastersp/cta/blob/main/Perfis%20Conflitantes.xlsx"
+GITHUB_LUCASV_URL = "https://raw.githubusercontent.com/chaosmastersp/cta/blob/main/LUCASV.xlsx"
+GITHUB_CONFLITOS_URL = "https://raw.githubusercontent.com/chaosmastersp/cta/blob/main/Perfis%20Conflitantes.xlsx"
 
 # Helper para rerun compatível (novas/antigas versões do Streamlit)
 def do_rerun():
@@ -444,3 +444,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
